@@ -1,10 +1,11 @@
 """
 PDF generator — converts the digest markdown text to a styled PDF.
-Uses reportlab for zero-dependency PDF generation.
+Uses reportlab with DejaVu fonts for proper Cyrillic support.
 """
 
 import io
 import re
+import os
 from datetime import datetime, timezone, timedelta
 
 from reportlab.lib.pagesizes import A4
@@ -31,14 +32,105 @@ COLOR_SECTION_BG  = HexColor("#f3f0ff")
 COLOR_DIVIDER     = HexColor("#e5e7eb")
 COLOR_WHITE       = white
 
+# ── Font registration ──────────────────────────────────────────────────────
+# DejaVu fonts support full Unicode including Cyrillic and emoji fallback
+_FONTS_REGISTERED = False
+
+def _register_fonts():
+    global _FONTS_REGISTERED
+    if _FONTS_REGISTERED:
+        return
+
+    # Possible locations for DejaVu fonts
+    font_search_paths = [
+        "/usr/share/fonts/truetype/dejavu",
+        "/usr/share/fonts/dejavu",
+        "/usr/share/fonts",
+        "/usr/local/share/fonts",
+        os.path.join(os.path.dirname(__file__), "fonts"),
+    ]
+
+    font_files = {
+        "DejaVu": "DejaVuSans.ttf",
+        "DejaVu-Bold": "DejaVuSans-Bold.ttf",
+        "DejaVu-Oblique": "DejaVuSans-Oblique.ttf",
+        "DejaVu-BoldOblique": "DejaVuSans-BoldOblique.ttf",
+    }
+
+    found = {}
+    for name, filename in font_files.items():
+        for path in font_search_paths:
+            full = os.path.join(path, filename)
+            if os.path.exists(full):
+                found[name] = full
+                break
+
+    if len(found) >= 2:
+        for name, path in found.items():
+            pdfmetrics.registerFont(TTFont(name, path))
+        # Register font family for bold/italic support
+        from reportlab.pdfbase.pdfmetrics import registerFontFamily
+        registerFontFamily(
+            "DejaVu",
+            normal="DejaVu",
+            bold="DejaVu-Bold" if "DejaVu-Bold" in found else "DejaVu",
+            italic="DejaVu-Oblique" if "DejaVu-Oblique" in found else "DejaVu",
+            boldItalic="DejaVu-BoldOblique" if "DejaVu-BoldOblique" in found else "DejaVu",
+        )
+        _FONTS_REGISTERED = True
+        return True
+
+    return False
+
+
+def _font(variant="normal"):
+    """Return font name: DejaVu if available, else fallback to Helvetica."""
+    if _FONTS_REGISTERED:
+        mapping = {
+            "normal": "DejaVu",
+            "bold": "DejaVu-Bold",
+            "italic": "DejaVu-Oblique",
+            "bolditalic": "DejaVu-BoldOblique",
+        }
+        return mapping.get(variant, "DejaVu")
+    else:
+        mapping = {
+            "normal": "Helvetica",
+            "bold": "Helvetica-Bold",
+            "italic": "Helvetica-Oblique",
+            "bolditalic": "Helvetica-BoldOblique",
+        }
+        return mapping.get(variant, "Helvetica")
+
+
+def _strip_emoji(text: str) -> str:
+    """Remove emoji characters that reportlab cannot render."""
+    # Remove common emoji ranges
+    emoji_pattern = re.compile(
+        "["
+        "\U0001F600-\U0001F64F"
+        "\U0001F300-\U0001F5FF"
+        "\U0001F680-\U0001F6FF"
+        "\U0001F1E0-\U0001F1FF"
+        "\U00002700-\U000027BF"
+        "\U0001F900-\U0001F9FF"
+        "\U00002600-\U000026FF"
+        "\U0001FA00-\U0001FA6F"
+        "\U0001FA70-\U0001FAFF"
+        "\U00002300-\U000023FF"
+        "]+",
+        flags=re.UNICODE,
+    )
+    return emoji_pattern.sub("", text).strip()
+
 
 def get_styles() -> dict:
-    base = getSampleStyleSheet()
+    _register_fonts()
 
     styles = {
         "title": ParagraphStyle(
             "DigestTitle",
-            fontName="Helvetica-Bold",
+            fontName=_font("bold"),
             fontSize=22,
             textColor=COLOR_WHITE,
             alignment=TA_CENTER,
@@ -46,7 +138,7 @@ def get_styles() -> dict:
         ),
         "subtitle": ParagraphStyle(
             "DigestSubtitle",
-            fontName="Helvetica",
+            fontName=_font("normal"),
             fontSize=11,
             textColor=HexColor("#c4b5fd"),
             alignment=TA_CENTER,
@@ -54,7 +146,7 @@ def get_styles() -> dict:
         ),
         "section_header": ParagraphStyle(
             "SectionHeader",
-            fontName="Helvetica-Bold",
+            fontName=_font("bold"),
             fontSize=13,
             textColor=COLOR_ACCENT,
             spaceBefore=16,
@@ -62,7 +154,7 @@ def get_styles() -> dict:
         ),
         "item_title": ParagraphStyle(
             "ItemTitle",
-            fontName="Helvetica-Bold",
+            fontName=_font("bold"),
             fontSize=11,
             textColor=COLOR_TEXT,
             spaceBefore=8,
@@ -70,7 +162,7 @@ def get_styles() -> dict:
         ),
         "item_body": ParagraphStyle(
             "ItemBody",
-            fontName="Helvetica",
+            fontName=_font("normal"),
             fontSize=9.5,
             textColor=COLOR_TEXT,
             leading=14,
@@ -79,14 +171,14 @@ def get_styles() -> dict:
         ),
         "item_link": ParagraphStyle(
             "ItemLink",
-            fontName="Helvetica-Oblique",
+            fontName=_font("italic"),
             fontSize=8.5,
             textColor=COLOR_ACCENT,
             spaceAfter=4,
         ),
         "footer": ParagraphStyle(
             "Footer",
-            fontName="Helvetica",
+            fontName=_font("normal"),
             fontSize=8,
             textColor=COLOR_MUTED,
             alignment=TA_CENTER,
@@ -105,6 +197,25 @@ SECTION_MARKERS = [
     ("💎", "ЖЕМЧУЖИНА ДНЯ"),
 ]
 
+# Text replacements for emoji section markers
+SECTION_EMOJI_REPLACE = {
+    "🔥": "[TOP]",
+    "⚡": "[NEW]",
+    "🏢": "[RE]",
+    "🍕": "[QSR]",
+    "💡": "[HOW]",
+    "🔮": "[FORECAST]",
+    "💎": "[GEM]",
+    "🗞": "[NEWS]",
+    "🔗": "->",
+}
+
+def _clean_text(text: str) -> str:
+    """Replace emoji with text equivalents and strip remaining ones."""
+    for emoji, replacement in SECTION_EMOJI_REPLACE.items():
+        text = text.replace(emoji, replacement)
+    return _strip_emoji(text)
+
 
 def parse_digest(text: str) -> list[dict]:
     """
@@ -119,24 +230,25 @@ def parse_digest(text: str) -> list[dict]:
         if not line:
             continue
 
-        # Section header (bold with ** or starts with emoji section name)
+        # Section header
         is_section = False
         for emoji, keyword in SECTION_MARKERS:
             if emoji in line and keyword[:6] in line.upper():
                 is_section = True
-                # Clean markdown bold markers
                 clean = re.sub(r"\*+", "", line).strip()
+                clean = _clean_text(clean)
                 elements.append({"type": "section", "text": clean})
                 break
 
         if is_section:
             continue
 
-        # Numbered item title: starts with digit + dot or **number
+        # Numbered item title
         m = re.match(r"^\*{0,2}(\d+)[.)]\s+(.+)", line)
         if m:
             num = m.group(1)
             rest = re.sub(r"\*+", "", m.group(2)).strip()
+            rest = _clean_text(rest)
             elements.append({"type": "item_title", "num": num, "text": rest})
             continue
 
@@ -147,6 +259,7 @@ def parse_digest(text: str) -> list[dict]:
 
         # Regular body text
         clean = re.sub(r"\*+", "", line).strip()
+        clean = _clean_text(clean)
         if clean:
             elements.append({"type": "body", "text": clean})
 
@@ -155,9 +268,8 @@ def parse_digest(text: str) -> list[dict]:
 
 def build_header(styles: dict, date_str: str) -> list:
     """Build the PDF header block."""
-    from reportlab.platypus import Table, TableStyle
     header_content = [
-        Paragraph("🗞 AI-ДАЙДЖЕСТ", styles["title"]),
+        Paragraph("AI-ДАЙДЖЕСТ", styles["title"]),
         Paragraph(date_str, styles["subtitle"]),
         Spacer(1, 8),
         Paragraph("Ежедневный обзор мира искусственного интеллекта", styles["subtitle"]),
@@ -210,16 +322,7 @@ def generate_pdf(digest_text: str) -> io.BytesIO:
             story.append(Paragraph(el["text"], styles["section_header"]))
 
         elif el["type"] == "item_title":
-            num_style = ParagraphStyle(
-                "Num",
-                fontName="Helvetica-Bold",
-                fontSize=11,
-                textColor=COLOR_ACCENT,
-            )
-            title_text = (
-                f'<font color="#7c3aed"><b>{el["num"]}.</b></font> '
-                f'<b>{el["text"]}</b>'
-            )
+            title_text = f'{el["num"]}. {el["text"]}'
             story.append(Spacer(1, 6))
             story.append(Paragraph(title_text, styles["item_title"]))
 
@@ -228,9 +331,9 @@ def generate_pdf(digest_text: str) -> io.BytesIO:
 
         elif el["type"] == "link":
             link_text = el["text"]
-            if len(link_text) > 80:
-                link_text = link_text[:77] + "..."
-            story.append(Paragraph(f"🔗 {link_text}", styles["item_link"]))
+            if len(link_text) > 90:
+                link_text = link_text[:87] + "..."
+            story.append(Paragraph(f"-> {link_text}", styles["item_link"]))
 
     # Footer
     story.append(Spacer(1, 20))
