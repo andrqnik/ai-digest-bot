@@ -45,6 +45,7 @@ def _register_fonts():
     font_search_paths = [
         "/usr/share/fonts/truetype/dejavu",
         "/usr/share/fonts/dejavu",
+        "/usr/share/fonts/truetype",
         "/usr/share/fonts",
         "/usr/local/share/fonts",
         os.path.join(os.path.dirname(__file__), "fonts"),
@@ -53,8 +54,6 @@ def _register_fonts():
     font_files = {
         "DejaVu": "DejaVuSans.ttf",
         "DejaVu-Bold": "DejaVuSans-Bold.ttf",
-        "DejaVu-Oblique": "DejaVuSans-Oblique.ttf",
-        "DejaVu-BoldOblique": "DejaVuSans-BoldOblique.ttf",
     }
 
     found = {}
@@ -65,17 +64,20 @@ def _register_fonts():
                 found[name] = full
                 break
 
-    if len(found) >= 2:
-        for name, path in found.items():
-            pdfmetrics.registerFont(TTFont(name, path))
-        # Register font family for bold/italic support
+    if "DejaVu" in found:
+        # Register normal font
+        pdfmetrics.registerFont(TTFont("DejaVu", found["DejaVu"]))
+        # Register bold font (fallback to normal if not found)
+        bold_path = found.get("DejaVu-Bold", found["DejaVu"])
+        pdfmetrics.registerFont(TTFont("DejaVu-Bold", bold_path))
+        # Register font family — map bold/italic ALL to registered names
         from reportlab.pdfbase.pdfmetrics import registerFontFamily
         registerFontFamily(
             "DejaVu",
             normal="DejaVu",
-            bold="DejaVu-Bold" if "DejaVu-Bold" in found else "DejaVu",
-            italic="DejaVu-Oblique" if "DejaVu-Oblique" in found else "DejaVu",
-            boldItalic="DejaVu-BoldOblique" if "DejaVu-BoldOblique" in found else "DejaVu",
+            bold="DejaVu-Bold",
+            italic="DejaVu",
+            boldItalic="DejaVu-Bold",
         )
         _FONTS_REGISTERED = True
         return True
@@ -89,8 +91,8 @@ def _font(variant="normal"):
         mapping = {
             "normal": "DejaVu",
             "bold": "DejaVu-Bold",
-            "italic": "DejaVu-Oblique",
-            "bolditalic": "DejaVu-BoldOblique",
+            "italic": "DejaVu",       # no separate italic — use normal
+            "bolditalic": "DejaVu-Bold",
         }
         return mapping.get(variant, "DejaVu")
     else:
