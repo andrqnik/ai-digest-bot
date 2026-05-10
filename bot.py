@@ -155,7 +155,7 @@ async def chat_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         await update.message.chat.send_action("typing")
 
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with httpx.AsyncClient(timeout=120) as client:
             resp = await client.post(
                 "https://api.anthropic.com/v1/messages",
                 headers={
@@ -164,8 +164,8 @@ async def chat_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
                     "content-type": "application/json",
                 },
                 json={
-                    "model": "claude-haiku-4-5-20251001",
-                    "max_tokens": 1024,
+                    "model": "claude-sonnet-4-6",
+                    "max_tokens": 4096,
                     "system": system_prompt,
                     "messages": conversation_history[chat_id],
                 },
@@ -178,7 +178,25 @@ async def chat_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             {"role": "assistant", "content": assistant_reply}
         )
 
-        await update.message.reply_text(assistant_reply)
+        # Telegram limit is 4096 chars — split long replies into chunks
+        MAX_MSG = 4000
+        if len(assistant_reply) <= MAX_MSG:
+            await update.message.reply_text(assistant_reply)
+        else:
+            # Split at paragraph boundaries to keep text readable
+            chunks = []
+            current = ""
+            for paragraph in assistant_reply.split("\n\n"):
+                if len(current) + len(paragraph) + 2 > MAX_MSG:
+                    if current:
+                        chunks.append(current.strip())
+                    current = paragraph
+                else:
+                    current = current + "\n\n" + paragraph if current else paragraph
+            if current:
+                chunks.append(current.strip())
+            for chunk in chunks:
+                await update.message.reply_text(chunk)
 
     except Exception as e:
         logger.error(f"Chat error for {chat_id}: {e}", exc_info=True)
