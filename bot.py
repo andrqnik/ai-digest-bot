@@ -45,6 +45,36 @@ conversation_history: dict[int, list[dict]] = {}
 # Last digest text per chat_id (so the bot can answer questions about it)
 last_digest: dict[int, str] = {}
 
+DIGEST_STORE_DIR = "/tmp/ai_digest_store"
+
+
+def _digest_path(chat_id: int) -> str:
+    os.makedirs(DIGEST_STORE_DIR, exist_ok=True)
+    return os.path.join(DIGEST_STORE_DIR, f"last_digest_{chat_id}.txt")
+
+
+def _save_last_digest(chat_id: int, text: str) -> None:
+    try:
+        with open(_digest_path(chat_id), "w", encoding="utf-8") as f:
+            f.write(text)
+        logger.info(f"Saved last digest to disk for chat_id={chat_id}")
+    except Exception as e:
+        logger.warning(f"Could not save digest for {chat_id}: {e}")
+
+
+def _load_last_digest(chat_id: int) -> Optional[str]:
+    path = _digest_path(chat_id)
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                text = f.read()
+            if text.strip():
+                logger.info(f"Loaded last digest from disk for chat_id={chat_id}")
+                return text
+        except Exception as e:
+            logger.warning(f"Could not load digest for {chat_id}: {e}")
+    return None
+
 
 # ── Handlers ────────────────────────────────────────────────────────────────
 
@@ -89,6 +119,7 @@ async def send_digest_to_chat(app: Application, chat_id: int) -> None:
 
         digest_text = await build_digest()
         last_digest[chat_id] = digest_text
+        _save_last_digest(chat_id, digest_text)
         conversation_history[chat_id] = []
 
         pdf_bytes = generate_pdf(digest_text)
@@ -126,6 +157,12 @@ async def chat_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
     if chat_id not in conversation_history:
         conversation_history[chat_id] = []
+
+    # Load digest from disk if not in memory (e.g. after redeployment)
+    if chat_id not in last_digest:
+        loaded = _load_last_digest(chat_id)
+        if loaded:
+            last_digest[chat_id] = loaded
 
     # Build system prompt
     digest_context = ""
