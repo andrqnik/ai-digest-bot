@@ -45,7 +45,7 @@ conversation_history: dict[int, list[dict]] = {}
 # Last digest text per chat_id (so the bot can answer questions about it)
 last_digest: dict[int, str] = {}
 
-DIGEST_STORE_DIR = "/tmp/ai_digest_store"
+DIGEST_STORE_DIR = "/data"
 
 
 def _digest_path(chat_id: int) -> str:
