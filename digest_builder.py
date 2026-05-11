@@ -4,7 +4,9 @@ a structured 20-point AI news digest in Russian.
 """
 
 import asyncio
+import json
 import logging
+import os
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
@@ -14,6 +16,28 @@ from bs4 import BeautifulSoup
 logger = logging.getLogger(__name__)
 
 DUBAI_TZ = timezone(timedelta(hours=4))
+
+# ── Seen headlines tracking (persisted to file) ───────────────────────────────
+SEEN_HEADLINES_FILE = "/tmp/seen_headlines.json"
+MAX_SEEN_HEADLINES = 500  # keep last N headlines to avoid repeats
+
+def _load_seen_headlines() -> set:
+    try:
+        if os.path.exists(SEEN_HEADLINES_FILE):
+            with open(SEEN_HEADLINES_FILE, "r") as f:
+                return set(json.load(f))
+    except Exception:
+        pass
+    return set()
+
+def _save_seen_headlines(headlines: set) -> None:
+    try:
+        # Keep only the last MAX_SEEN_HEADLINES entries
+        items = list(headlines)[-MAX_SEEN_HEADLINES:]
+        with open(SEEN_HEADLINES_FILE, "w") as f:
+            json.dump(items, f)
+    except Exception as e:
+        logger.warning(f"Could not save seen headlines: {e}")
 
 # ── Source list (50+ sources) ────────────────────────────────────────────────
 
@@ -275,7 +299,6 @@ DIGEST_SYSTEM_PROMPT = """Ты — редактор ежедневного AI-д
 
 async def build_digest() -> str:
     """Main entry point: fetch sources → synthesize with Claude → return text."""
-    import os
     import httpx as _httpx
 
     logger.info("Gathering sources...")
@@ -289,9 +312,24 @@ async def build_digest() -> str:
     now_dubai = datetime.now(DUBAI_TZ)
     date_str = now_dubai.strftime("%d %B %Y")
 
+    # Load previously shown headlines to avoid repeats
+    seen_headlines = _load_seen_headlines()
+    seen_block = ""
+    if seen_headlines:
+        seen_sample = list(seen_headlines)[-100:]  # send last 100 to Claude
+        seen_block = (
+            "\n\nУЖЕ ПОКАЗАННЫЕ НОВОСТИ (НЕ ПОВТОРЯТЬ):\n"
+            + "\n".join(f"- {h}" for h in seen_sample)
+            + "\n\nЭти заголовки уже были в предыдущих дайджестах. "
+            "Выбирай ТОЛЬКО новые, не упоминавшиеся ранее новости. "
+            "Если свежих новостей мало, бери новости за последние 3-7 дней — "
+            "лучше чуть более старая новая новость, чем вчерашний повтор.\n"
+        )
+
     user_message = (
-        f"Сегодня {date_str}. Вот сырые данные из 50+ источников за последние 24 часа. "
-        f"Составь дайджест из 20 пунктов согласно инструкции.\n\n"
+        f"Сегодня {date_str}. Вот сырые данные из 50+ источников. "
+        f"Составь дайджест из 20 пунктов согласно инструкции."
+        f"{seen_block}\n\n"
         f"ДАННЫЕ:\n{raw_content}"
     )
 
@@ -316,4 +354,13 @@ async def build_digest() -> str:
 
     digest_text = data["content"][0]["text"]
     logger.info(f"Digest generated: {len(digest_text)} chars")
+
+    # Extract headlines from digest and save to seen list
+    import re
+    new_headlines = re.findall(r"^\d+\.\s+(.+)$", digest_text, re.MULTILINE)
+    if new_headlines:
+        seen_headlines.update(new_headlines)
+        _save_seen_headlines(seen_headlines)
+        logger.info(f"Saved {len(new_headlines)} new headlines to seen list (total: {len(seen_headlines)})")
+
     return digest_text

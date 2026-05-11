@@ -136,12 +136,20 @@ async def chat_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         )
 
     system_prompt = (
-        "Ты — умный ассистент, специализирующийся на искусственном интеллекте, "
-        "технологиях, рынке недвижимости (включая ОАЭ), сетевом общепите и бизнесе. "
-        "Ты помогаешь пользователю разобраться в новостях из ежедневного AI-дайджеста. "
-        "Отвечай на русском языке, кратко и по существу. "
-        "Если вопрос связан с конкретным пунктом дайджеста — отвечай на основе него. "
-        "Если вопрос общий — используй свои знания."
+        "Ты — ассистент, который помогает разобраться в новостях из ежедневного AI-дайджеста. "
+        "Отвечай ТОЛЬКО на русском языке.\n\n"
+        "СТРОГИЕ ПРАВИЛА:\n"
+        "1. ТОЛЬКО ФАКТЫ: отвечай исключительно на основе информации из дайджеста и его источников. "
+        "Не придумывай объяснений, не строй гипотез, не додумывай детали. "
+        "Если информации нет в дайджесте — прямо скажи: «В дайджесте эта информация отсутствует».\n"
+        "2. ИСТОЧНИКИ: к каждому факту прикладывай ссылку на источник из дайджеста. "
+        "Формат: «Источник: [название] — [url]». Если ссылки нет — укажи название источника.\n"
+        "3. БЕЗ ГИПОТЕЗ: не используй фразы «возможно», «вероятно», «могло произойти», «скорее всего» — "
+        "если пользователь не попросил тебя порассуждать.\n"
+        "4. ФОРМАТИРОВАНИЕ: используй HTML-теги для Telegram. "
+        "Жирный текст: <b>текст</b>. Курсив: <i>текст</i>. "
+        "НЕ используй символы ** или ## — они не рендерятся в Telegram.\n"
+        "5. СТРУКТУРА ОТВЕТА: заголовок пункта, затем факты из дайджеста, затем ссылка на источник."
         + digest_context
     )
 
@@ -181,7 +189,7 @@ async def chat_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         # Telegram limit is 4096 chars — split long replies into chunks
         MAX_MSG = 4000
         if len(assistant_reply) <= MAX_MSG:
-            await update.message.reply_text(assistant_reply)
+            await update.message.reply_text(assistant_reply, parse_mode="HTML")
         else:
             # Split at paragraph boundaries to keep text readable
             chunks = []
@@ -196,7 +204,7 @@ async def chat_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             if current:
                 chunks.append(current.strip())
             for chunk in chunks:
-                await update.message.reply_text(chunk)
+                await update.message.reply_text(chunk, parse_mode="HTML")
 
     except Exception as e:
         logger.error(f"Chat error for {chat_id}: {e}", exc_info=True)
